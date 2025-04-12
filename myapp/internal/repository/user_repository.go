@@ -2,13 +2,13 @@ package repository
 
 import (
 	"context"
-	"fmt"
 	"myapp/internal/config"
 	"myapp/internal/domain"
 	"myapp/internal/instrumentation"
 	"strconv"
 
 	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -30,9 +30,12 @@ func NewUserRepository(cfg *config.Config) UserRepository {
 func (r *userRepository) FindByID(ctx context.Context, id int) (*domain.User, error) {
 	_, span := instrumentation.TracerDB.Start(ctx, "DB.GetUser", trace.WithSpanKind(trace.SpanKindClient))
 	span.SetAttributes(
-		attribute.String("db.system", "mock"),
-		attribute.String("user.id", strconv.Itoa(id)),
-		attribute.Key("sql.query").String(fmt.Sprintf("SELECT * FROM users WHERE id='%s'", strconv.Itoa(id))),
+		semconv.DBSystemKey.String("mock"),
+		semconv.DBStatementKey.String("SELECT * FROM users WHERE id=?"),
+		semconv.DBOperationKey.String("SELECT"),
+		semconv.DBNameKey.String("users_db"),
+		attribute.String("db.table", "users"),
+		attribute.String("db.user.id", strconv.Itoa(id)),
 	)
 	defer span.End()
 
@@ -45,9 +48,12 @@ func (r *userRepository) FindByID(ctx context.Context, id int) (*domain.User, er
 func (r *userRepository) FindDetailByID(ctx context.Context, id int) (*domain.UserDetail, error) {
 	_, span := instrumentation.TracerDB.Start(ctx, "DB.GetUserDetail", trace.WithSpanKind(trace.SpanKindClient))
 	span.SetAttributes(
-		attribute.String("db.system", "mock"),
-		attribute.String("user.id", strconv.Itoa(id)),
-		attribute.Key("sql.query").String(fmt.Sprintf("SELECT * FROM user_details WHERE id='%s'", strconv.Itoa(id))),
+		semconv.DBSystemKey.String("mock"),
+		semconv.DBStatementKey.String("SELECT * FROM user_details WHERE id=?"),
+		semconv.DBOperationKey.String("SELECT"),
+		semconv.DBNameKey.String("users_db"),
+		attribute.String("db.table", "user_details"),
+		attribute.String("db.user.id", strconv.Itoa(id)),
 	)
 	defer span.End()
 

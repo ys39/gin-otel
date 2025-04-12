@@ -3,13 +3,13 @@ package repository
 import (
 	"context"
 	"errors"
-	"fmt"
 	"myapp/internal/domain"
 	"myapp/internal/instrumentation"
 	"strconv"
 	"time"
 
 	"go.opentelemetry.io/otel/attribute"
+	semconv "go.opentelemetry.io/otel/semconv/v1.24.0"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -40,9 +40,13 @@ func NewMockUserRepository() UserRepository {
 func (m *mockUserRepository) FindByID(ctx context.Context, id int) (*domain.User, error) {
 	_, span := instrumentation.TracerDB.Start(ctx, "MockDB.GetUser", trace.WithSpanKind(trace.SpanKindClient))
 	span.SetAttributes(
-		attribute.String("db.system", "mock"),
-		attribute.String("user.id", strconv.Itoa(id)),
-		attribute.Key("sql.query").String(fmt.Sprintf("SELECT * FROM users WHERE id='%s'", strconv.Itoa(id))),
+		semconv.DBSystemKey.String("mock"),
+		semconv.DBStatementKey.String("SELECT * FROM users WHERE id=?"),
+		semconv.DBOperationKey.String("SELECT"),
+		semconv.DBNameKey.String("users_db"),
+		attribute.String("db.table", "users"),
+		attribute.String("db.user.id", strconv.Itoa(id)),
+		attribute.Int("db.query.timeout_ms", 100),
 	)
 	defer span.End()
 
@@ -51,8 +55,9 @@ func (m *mockUserRepository) FindByID(ctx context.Context, id int) (*domain.User
 
 	user, ok := m.Users[id]
 	if !ok {
-		span.RecordError(errors.New("user not found"))
-		return nil, errors.New("user not found")
+		err := errors.New("user not found")
+		instrumentation.RecordError(span, err)
+		return nil, err
 	}
 	return &user, nil
 }
@@ -60,9 +65,13 @@ func (m *mockUserRepository) FindByID(ctx context.Context, id int) (*domain.User
 func (m *mockUserRepository) FindDetailByID(ctx context.Context, id int) (*domain.UserDetail, error) {
 	_, span := instrumentation.TracerDB.Start(ctx, "MockDB.GetUserDetail", trace.WithSpanKind(trace.SpanKindClient))
 	span.SetAttributes(
-		attribute.String("db.system", "mock"),
-		attribute.String("user.id", strconv.Itoa(id)),
-		attribute.Key("sql.query").String(fmt.Sprintf("SELECT * FROM user_details WHERE id='%s'", strconv.Itoa(id))),
+		semconv.DBSystemKey.String("mock"),
+		semconv.DBStatementKey.String("SELECT * FROM user_details WHERE id=?"),
+		semconv.DBOperationKey.String("SELECT"),
+		semconv.DBNameKey.String("users_db"),
+		attribute.String("db.table", "user_details"),
+		attribute.String("db.user.id", strconv.Itoa(id)),
+		attribute.Int("db.query.timeout_ms", 100),
 	)
 	defer span.End()
 
@@ -71,8 +80,9 @@ func (m *mockUserRepository) FindDetailByID(ctx context.Context, id int) (*domai
 
 	userDetail, ok := m.UserDetails[id]
 	if !ok {
-		span.RecordError(errors.New("user detail not found"))
-		return nil, errors.New("user detail not found")
+		err := errors.New("user detail not found")
+		instrumentation.RecordError(span, err)
+		return nil, err
 	}
 	return &userDetail, nil
 }

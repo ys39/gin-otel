@@ -3,10 +3,14 @@ package instrumentation
 import (
 	"context"
 	"fmt"
+	"os"
+	"runtime"
 
 	"myapp/internal/config"
 
 	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/codes"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace"
 	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
 	"go.opentelemetry.io/otel/propagation"
@@ -22,6 +26,25 @@ var (
 	TracerCache    trace.Tracer
 	TracerRenderer trace.Tracer
 )
+
+// RecordError はエラーをスパンに記録するヘルパー関数です。
+// エラーの重大度を設定し、スタックトレース情報も追加します。
+func RecordError(span trace.Span, err error) {
+	if err == nil {
+		return
+	}
+
+	span.RecordError(err, trace.WithStackTrace(true))
+	span.SetStatus(codes.Error, err.Error())
+
+	_, file, line, ok := runtime.Caller(1)
+	if ok {
+		span.SetAttributes(
+			attribute.String("error.file", file),
+			attribute.Int("error.line", line),
+		)
+	}
+}
 
 // InitTracerProvider は OpenTelemetry のトレーサーを初期化し、TracerProvider を返します。
 func InitTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
@@ -44,11 +67,17 @@ func InitTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
 		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
 	}
 
-	// resource := resource.Default()
+	// リソース属性を詳細に設定
+	hostname, _ := os.Hostname()
 	resource := resource.NewWithAttributes(
 		semconv.SchemaURL,
 		semconv.ServiceNameKey.String(cfg.OtelServiceName),
 		semconv.ServiceVersionKey.String(cfg.OtelServiceVersion),
+		semconv.ServiceInstanceIDKey.String(hostname),
+		semconv.DeploymentEnvironmentKey.String("development"),
+		semconv.TelemetrySDKNameKey.String("opentelemetry"),
+		semconv.TelemetrySDKLanguageKey.String("go"),
+		semconv.TelemetrySDKVersionKey.String("1.24.0"),
 	)
 
 	tp := sdktrace.NewTracerProvider(
