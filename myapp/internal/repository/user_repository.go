@@ -19,23 +19,26 @@ type UserRepository interface {
 
 // 実際の DB アクセスを行う実装例
 type userRepository struct {
+	cfg         *config.Config
 	Users       map[int]domain.User
 	UserDetails map[int]domain.UserDetail
 }
 
 func NewUserRepository(cfg *config.Config) UserRepository {
-	return &userRepository{}
+	return &userRepository{
+		cfg: cfg,
+	}
 }
 
 func (r *userRepository) FindByID(ctx context.Context, id int) (*domain.User, error) {
 	_, span := instrumentation.TracerDB.Start(ctx, "DB.GetUser", trace.WithSpanKind(trace.SpanKindClient))
 	span.SetAttributes(
-		semconv.DBSystemKey.String("mock"),
+		semconv.DBSystemKey.String(r.cfg.DBSystem),
 		semconv.DBStatementKey.String("SELECT * FROM users WHERE id=?"),
 		semconv.DBOperationKey.String("SELECT"),
-		semconv.DBNameKey.String("users_db"),
-		attribute.String("db.table", "users"),
-		attribute.String("db.user.id", strconv.Itoa(id)),
+		semconv.DBNameKey.String(r.cfg.DBName),
+		semconv.DBSQLTableKey.String("users"),
+		attribute.String("db.users.id", strconv.Itoa(id)),
 	)
 	defer span.End()
 
@@ -48,11 +51,11 @@ func (r *userRepository) FindByID(ctx context.Context, id int) (*domain.User, er
 func (r *userRepository) FindDetailByID(ctx context.Context, id int) (*domain.UserDetail, error) {
 	_, span := instrumentation.TracerDB.Start(ctx, "DB.GetUserDetail", trace.WithSpanKind(trace.SpanKindClient))
 	span.SetAttributes(
-		semconv.DBSystemKey.String("mock"),
+		semconv.DBSystemKey.String(r.cfg.DBSystem),
 		semconv.DBStatementKey.String("SELECT * FROM user_details WHERE id=?"),
 		semconv.DBOperationKey.String("SELECT"),
-		semconv.DBNameKey.String("users_db"),
-		attribute.String("db.table", "user_details"),
+		semconv.DBNameKey.String(r.cfg.DBName),
+		semconv.DBSQLTableKey.String("user_details"),
 		attribute.String("db.user.id", strconv.Itoa(id)),
 	)
 	defer span.End()

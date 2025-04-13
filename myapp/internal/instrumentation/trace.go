@@ -74,10 +74,10 @@ func InitTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
 		semconv.ServiceNameKey.String(cfg.OtelServiceName),
 		semconv.ServiceVersionKey.String(cfg.OtelServiceVersion),
 		semconv.ServiceInstanceIDKey.String(hostname),
-		semconv.DeploymentEnvironmentKey.String("development"),
-		semconv.TelemetrySDKNameKey.String("opentelemetry"),
-		semconv.TelemetrySDKLanguageKey.String("go"),
-		semconv.TelemetrySDKVersionKey.String("1.24.0"),
+		semconv.DeploymentEnvironmentKey.String(cfg.OtelDeploymentEnv),
+		semconv.TelemetrySDKNameKey.String(cfg.OtelSDKName),
+		semconv.TelemetrySDKLanguageKey.String(cfg.OtelSDKLanguage),
+		semconv.TelemetrySDKVersionKey.String(cfg.OtelSDKVersion),
 	)
 
 	tp := sdktrace.NewTracerProvider(

@@ -33,15 +33,24 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 	ctx, span := instrumentation.TracerAPI.Start(c.Request.Context(), "GetUser", oteltrace.WithSpanKind(oteltrace.SpanKindServer))
 	defer span.End()
 
+	// スキーム情報を正確に取得
+	scheme := c.Request.Header.Get("X-Forwarded-Proto")
+	if scheme == "" {
+		if c.Request.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+
 	// HTTPリクエスト関連の属性を設定
 	span.SetAttributes(
 		semconv.HTTPMethodKey.String(c.Request.Method),
-		semconv.HTTPURLKey.String(c.Request.URL.String()),
+		semconv.URLFullKey.String(scheme+"://"+c.Request.Host+c.Request.URL.Path),
+		semconv.URLPathKey.String(c.Request.URL.Path),
 		semconv.HTTPUserAgentKey.String(c.Request.UserAgent()),
 		semconv.HTTPRequestContentLengthKey.Int64(c.Request.ContentLength),
-		attribute.String("http.scheme", c.Request.URL.Scheme),
-		attribute.String("http.host", c.Request.Host),
-		attribute.String("http.target", c.Request.URL.Path),
+		semconv.URLSchemeKey.String(scheme),
 	)
 
 	// パスパラメータから ID を取得
@@ -55,7 +64,7 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 	// スパンにユーザー ID をセット
 	span.SetAttributes(
 		attribute.String("user.id", strconv.Itoa(id)),
-		attribute.String("endpoint.path", "/users/:id"),
+		semconv.HTTPRouteKey.String("/users/:id"),
 	)
 
 	// Service レイヤーを通じてユーザーを取得

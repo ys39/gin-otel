@@ -41,8 +41,8 @@ func main() {
 
 	// 4. リポジトリ / サービス初期化
 	// userRepo := repository.NewUserRepository(cfg) // 例: 実際のDBへ接続する実装
-	userRepo := repository.NewMockUserRepository()  // モック実装
-	userService := service.NewUserService(userRepo) // DI
+	userRepo := repository.NewMockUserRepository(cfg) // モック実装
+	userService := service.NewUserService(userRepo)   // DI
 
 	// 5. Handler 登録
 	handler.NewUserHandler(r, userService)

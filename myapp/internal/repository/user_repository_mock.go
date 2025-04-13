@@ -3,6 +3,7 @@ package repository
 import (
 	"context"
 	"errors"
+	"myapp/internal/config"
 	"myapp/internal/domain"
 	"myapp/internal/instrumentation"
 	"strconv"
@@ -14,11 +15,12 @@ import (
 )
 
 type mockUserRepository struct {
+	cfg         *config.Config
 	Users       map[int]domain.User
 	UserDetails map[int]domain.UserDetail
 }
 
-func NewMockUserRepository() UserRepository {
+func NewMockUserRepository(cfg *config.Config) UserRepository {
 
 	mockUsers := map[int]domain.User{
 		1: {ID: "sample123", Name: "otelgin tester"},
@@ -32,6 +34,7 @@ func NewMockUserRepository() UserRepository {
 	}
 
 	return &mockUserRepository{
+		cfg:         cfg,
 		Users:       mockUsers,
 		UserDetails: mockUserDetails,
 	}
@@ -40,13 +43,12 @@ func NewMockUserRepository() UserRepository {
 func (m *mockUserRepository) FindByID(ctx context.Context, id int) (*domain.User, error) {
 	_, span := instrumentation.TracerDB.Start(ctx, "MockDB.GetUser", trace.WithSpanKind(trace.SpanKindClient))
 	span.SetAttributes(
-		semconv.DBSystemKey.String("mock"),
+		semconv.DBSystemKey.String(m.cfg.DBMockSystem),
 		semconv.DBStatementKey.String("SELECT * FROM users WHERE id=?"),
 		semconv.DBOperationKey.String("SELECT"),
-		semconv.DBNameKey.String("users_db"),
-		attribute.String("db.table", "users"),
-		attribute.String("db.user.id", strconv.Itoa(id)),
-		attribute.Int("db.query.timeout_ms", 100),
+		semconv.DBNameKey.String(m.cfg.DBName),
+		semconv.DBSQLTableKey.String("users"),
+		attribute.String("db.users.id", strconv.Itoa(id)),
 	)
 	defer span.End()
 
@@ -65,13 +67,12 @@ func (m *mockUserRepository) FindByID(ctx context.Context, id int) (*domain.User
 func (m *mockUserRepository) FindDetailByID(ctx context.Context, id int) (*domain.UserDetail, error) {
 	_, span := instrumentation.TracerDB.Start(ctx, "MockDB.GetUserDetail", trace.WithSpanKind(trace.SpanKindClient))
 	span.SetAttributes(
-		semconv.DBSystemKey.String("mock"),
+		semconv.DBSystemKey.String(m.cfg.DBMockSystem),
 		semconv.DBStatementKey.String("SELECT * FROM user_details WHERE id=?"),
 		semconv.DBOperationKey.String("SELECT"),
-		semconv.DBNameKey.String("users_db"),
-		attribute.String("db.table", "user_details"),
+		semconv.DBNameKey.String(m.cfg.DBName),
+		semconv.DBSQLTableKey.String("user_details"),
 		attribute.String("db.user.id", strconv.Itoa(id)),
-		attribute.Int("db.query.timeout_ms", 100),
 	)
 	defer span.End()
 
