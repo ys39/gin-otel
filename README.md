@@ -102,34 +102,47 @@ curl http://localhost:8080/users/1
 
 ```go
 func InitTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
-    // OTLPエクスポーターの設定
-    client := otlptracegrpc.NewClient(
-        otlptracegrpc.WithEndpoint(cfg.OtelHost+":"+cfg.OtelPort),
-        otlptracegrpc.WithInsecure(),
-    )
-    
-    exporter, err := otlptrace.New(context.Background(), client)
-    if err != nil {
-        return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
-    }
-    
-    // リソース属性の設定
-    resource := resource.NewWithAttributes(
-        semconv.SchemaURL,
-        semconv.ServiceNameKey.String(cfg.OtelServiceName),
-        semconv.ServiceVersionKey.String(cfg.OtelServiceVersion),
-    )
-    
-    // TracerProviderの作成
-    tp := sdktrace.NewTracerProvider(
-        sdktrace.WithBatcher(exporter),
-        sdktrace.WithResource(resource),
-        sdktrace.WithSampler(sdktrace.AlwaysSample()),
-    )
-    otel.SetTracerProvider(tp)
-    otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
-    
-    return tp, nil
+
+	// ここで config を使ってスコープ名を確定し、グローバル変数に割り当て
+	TracerAPI = otel.Tracer(cfg.OtelScopeAPIName)
+	TracerDB = otel.Tracer(cfg.OtelScopeDBName)
+	TracerCache = otel.Tracer(cfg.OtelScopeCacheName)
+	TracerRenderer = otel.Tracer(cfg.OtelScopeRendererName)
+
+	// OTLP(gRPC) クライアントを作成
+	client := otlptracegrpc.NewClient(
+		otlptracegrpc.WithEndpoint(cfg.OtelHost+":"+cfg.OtelPort),
+		otlptracegrpc.WithInsecure(), // ローカルなので認証なし
+	)
+
+	// 例: OTLP HTTP エクスポーターを利用する
+	exporter, err := otlptrace.New(context.Background(), client)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create OTLP trace exporter: %w", err)
+	}
+
+	// リソース属性を詳細に設定
+	hostname, _ := os.Hostname()
+	resource := resource.NewWithAttributes(
+		semconv.SchemaURL,
+		semconv.ServiceNameKey.String(cfg.OtelServiceName),
+		semconv.ServiceVersionKey.String(cfg.OtelServiceVersion),
+		semconv.ServiceInstanceIDKey.String(hostname),
+		semconv.DeploymentEnvironmentKey.String(cfg.OtelDeploymentEnv),
+		semconv.TelemetrySDKNameKey.String(cfg.OtelSDKName),
+		semconv.TelemetrySDKLanguageKey.String(cfg.OtelSDKLanguage),
+		semconv.TelemetrySDKVersionKey.String(cfg.OtelSDKVersion),
+	)
+
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(resource),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()),
+	)
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(propagation.TraceContext{}, propagation.Baggage{}))
+
+	return tp, nil
 }
 ```
 
@@ -137,21 +150,44 @@ func InitTracerProvider(cfg *config.Config) (*sdktrace.TracerProvider, error) {
 
 ```go
 func (h *UserHandler) GetUser(c *gin.Context) {
-    // スパンの開始
-    ctx, span := instrumentation.TracerAPI.Start(c.Request.Context(), "GetUser", oteltrace.WithSpanKind(oteltrace.SpanKindServer))
-    defer span.End()
+	// OpenTelemetry のスパンを開始
+	ctx, span := instrumentation.TracerAPI.Start(c.Request.Context(), "GetUser", oteltrace.WithSpanKind(oteltrace.SpanKindServer))
+	defer span.End()
     
-    // パラメータの取得と属性の設定
-    id, err := strconv.Atoi(c.Param("id"))
-    if err != nil {
-        JSON(c, ctx, http.StatusBadRequest, gin.H{"error": "invalid user id"})
-        return
-    }
-    
-    span.SetAttributes(
-        attribute.String("user.id", strconv.Itoa(id)),
-    )
-    
+	// スキーム情報を正確に取得
+	scheme := c.Request.Header.Get("X-Forwarded-Proto")
+	if scheme == "" {
+		if c.Request.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+
+	// HTTPリクエスト関連の属性を設定
+	span.SetAttributes(
+		semconv.HTTPMethodKey.String(c.Request.Method),
+		semconv.URLFullKey.String(scheme+"://"+c.Request.Host+c.Request.URL.Path),
+		semconv.URLPathKey.String(c.Request.URL.Path),
+		semconv.HTTPUserAgentKey.String(c.Request.UserAgent()),
+		semconv.HTTPRequestContentLengthKey.Int64(c.Request.ContentLength),
+		semconv.URLSchemeKey.String(scheme),
+	)
+
+	// パスパラメータから ID を取得
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil {
+		instrumentation.RecordError(span, err)
+		JSON(c, ctx, http.StatusBadRequest, gin.H{"error": "invalid user id"})
+		return
+	}
+
+	// スパンにユーザー ID をセット
+	span.SetAttributes(
+		attribute.String("user.id", strconv.Itoa(id)),
+		semconv.HTTPRouteKey.String("/users/:id"),
+	)
+
     // サービス呼び出し
     user, err := h.userService.GetUserByID(ctx, id)
     // ...
@@ -163,22 +199,26 @@ func (h *UserHandler) GetUser(c *gin.Context) {
 ```go
 func (m *mockUserRepository) FindByID(ctx context.Context, id int) (*domain.User, error) {
     // DBアクセス用のスパンを開始
-    _, span := instrumentation.TracerDB.Start(ctx, "MockDB.GetUser", trace.WithSpanKind(trace.SpanKindClient))
-    span.SetAttributes(
-        attribute.String("db.system", "mock"),
-        attribute.String("user.id", strconv.Itoa(id)),
-        attribute.Key("sql.query").String(fmt.Sprintf("SELECT * FROM users WHERE id='%s'", strconv.Itoa(id))),
-    )
-    defer span.End()
+	_, span := instrumentation.TracerDB.Start(ctx, "MockDB.GetUser", trace.WithSpanKind(trace.SpanKindClient))
+	span.SetAttributes(
+		semconv.DBSystemKey.String(m.cfg.DBMockSystem),
+		semconv.DBStatementKey.String("SELECT * FROM users WHERE id=?"),
+		semconv.DBOperationKey.String("SELECT"),
+		semconv.DBNameKey.String(m.cfg.DBName),
+		semconv.DBSQLTableKey.String("users"),
+		attribute.String("db.users.id", strconv.Itoa(id)),
+	)
+	defer span.End()
     
     // DBアクセス処理
     // ...
     
     // エラー発生時はスパンにエラーを記録
-    if !ok {
-        span.RecordError(errors.New("user not found"))
-        return nil, errors.New("user not found")
-    }
+	if !ok {
+		err := errors.New("user not found")
+		instrumentation.RecordError(span, err)
+		return nil, err
+	}
     
     return &user, nil
 }
@@ -189,19 +229,32 @@ func (m *mockUserRepository) FindByID(ctx context.Context, id int) (*domain.User
 ```go
 func JSON(c *gin.Context, ctx context.Context, code int, obj interface{}) {
     // レンダリング用のスパンを開始
-    _, span := instrumentation.TracerRenderer.Start(ctx, "gin.renderer.json", oteltrace.WithSpanKind(oteltrace.SpanKindInternal))
-    span.SetAttributes(
-        attribute.String("response.type", "json"),
-        attribute.String("response.code", fmt.Sprintf("%d", code)),
-    )
-    defer span.End()
+	_, span := instrumentation.TracerRenderer.Start(ctx, "gin.renderer.json", oteltrace.WithSpanKind(oteltrace.SpanKindInternal))
+	span.SetAttributes(
+		semconv.HTTPResponseStatusCodeKey.Int(code),
+		attribute.String("response.type", "json"),
+		attribute.String("response.content_type", "application/json"),
+	)
+	defer span.End()
     
     // エラーレスポンスの場合はスパンに記録
-    if code != 200 {
-        span.SetAttributes(
-            attribute.String("error", fmt.Sprintf("%v", obj)),
-        )
-    }
+	// HTTPステータスコードが200以外の場合は、エラー内容をスパンに記録
+	if code >= 400 {
+		var errMsg string
+		if errObj, ok := obj.(gin.H); ok {
+			if errStr, exists := errObj["error"]; exists {
+				errMsg = fmt.Sprintf("%v", errStr)
+			}
+		}
+
+		if errMsg == "" {
+			errMsg = fmt.Sprintf("HTTP %d error", code)
+		}
+
+		err := errors.New(errMsg)
+		instrumentation.RecordError(span, err)
+	}
+
     
     // レスポンス送信
     c.JSON(code, obj)
